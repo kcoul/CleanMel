@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning
 import librosa
+import soundfile as sf
+import yaml
 
 from torch import Tensor
 from torch.nn import Parameter, init
@@ -13,6 +15,9 @@ from torch.nn.common_types import _size_1_t
 
 from mamba_ssm import Mamba
 from mamba_ssm.utils.generation import InferenceParams
+
+from model.vocos.offline.pretrained import Vocos
+from huggingface_hub import hf_hub_download
 
 class LinearGroup(nn.Module):
 
@@ -169,11 +174,12 @@ class CleanMelLayer(nn.Module):
             xs = []
             for i in range(T):
                 inference_params.seqlen_offset = i
-                xi = mamba.forward(x[:, [i], :], inference_params)
+                xi = mamba.forward(x[:, i, :], inference_params) #TODO: Brackets removed around i here, is it ok???
                 xs.append(xi)
             x = torch.concat(xs, dim=1)
         else:
-            x = mamba.forward(x)
+            inference_all = InferenceParams(T, B * F) #TODO: Are these inference params ok???
+            x = mamba.forward(x, inference_params=inference_all)
         x = x.reshape(B, F, T, H)
         return dropout(x)
 
@@ -285,6 +291,24 @@ class CleanMel(nn.Module):
         y = self.decoder(x).squeeze(-1)
         return y.contiguous()
 
+def load_cleanmel(model_name):
+    model_config = f"../../configs/model/cleanmel_offline.yaml"
+    model_config = yaml.safe_load(open(model_config, "r"))["model"]["arch"]["init_args"]
+    cleanmel = CleanMel(**model_config)
+    REPO_ID = "WestlakeAudioLab/CleanMel"
+    arch_ckpt = hf_hub_download(repo_id=REPO_ID, filename=f"ckpts/CleanMel/{model_name}")
+    cleanmel.load_state_dict(torch.load(arch_ckpt))
+    return cleanmel.eval()
+
+def load_vocos():
+    vocos = Vocos.from_hparams(config_path="../../configs/model/vocos_offline.yaml")
+    REPO_ID = "WestlakeAudioLab/CleanMel"
+    vocos_ckpt = hf_hub_download(repo_id=REPO_ID, filename="ckpts/Vocos/vocos_offline.pt")
+    vocos = Vocos.from_pretrained(None, vocos_ckpt, model=vocos)
+    return vocos.eval()
+
+DEVICE = torch.device("cpu") #"cuda"
+
 if __name__ == '__main__':
     # a quick demo here for the CleanMel model
     # input: wavs
@@ -306,7 +330,7 @@ if __name__ == '__main__':
         center=True, 
         normalize=False, 
         onesided=True, 
-        online=online).to("cuda")
+        online=online).to("cpu") # "cuda"
     
     target_mel = TargetMel(
         sample_rate=16000,
@@ -323,7 +347,7 @@ if __name__ == '__main__':
         mel_norm="slaney",
         mel_scale="slaney",
         librosa_mel=True,
-        online=online).to("cuda")
+        online=online).to("cpu") # "cuda"
 
     def customize_soxnorm(wav, gain=-3, factor=None):
         wav = np.clip(wav, a_max=1, a_min=-1)
@@ -337,16 +361,16 @@ if __name__ == '__main__':
             return wav, None
 
     # Noisy file path
-    wav = "./src/demos/noisy_CHIME-real_F05_442C020S_STR_REAL.wav"
+    wav = "../../src/demos/noisy_CHIME-real_F05_442C020S_STR_REAL.wav"
     wavname = wav.split("/")[-1].split(".")[0]
     
     print(f"Processing {wav}")
     noisy, fs = sf.read(wav)
     dur = len(noisy) / fs
     noisy, factor = customize_soxnorm(noisy, gain=-3)
-    noisy = torch.tensor(noisy).unsqueeze(0).float().to("cuda")
+    noisy = torch.tensor(noisy).unsqueeze(0).float().to("cpu") # "cuda"
     # vocos norm
-    x = stft(noisy)
+    x, x_norm = stft(noisy)
     # Load the model
     hidden=96
     depth=8
@@ -364,10 +388,10 @@ if __name__ == '__main__':
         online=online,
         sr=16000,
         n_fft=512
-    ).to("cuda")
+    ).to("cpu") # "cuda"
 
     # Load the pretrained model
-    state_dict = torch.load("./pretrained/CleanMel_S_L1.ckpt")
+    state_dict = torch.load("../../pretrained/offline_CleanMel_S_mask.ckpt", map_location=torch.device('cpu'))
     model.load_state_dict(state_dict)
     
     model.eval()
@@ -378,24 +402,32 @@ if __name__ == '__main__':
     print(f"flops_forward={flops_forward_eval/1e9 / dur:.2f}G")
     print(f"params={params_eval/1e6:.2f} M")
 
+    vocos = load_vocos().to(DEVICE)
+    audio = vocos(y_hat, x_norm).clamp(min=-1, max=1)
+
+    audio_np = audio.numpy()
+
+    #TODO: Output data probably needs scaling to be correct here
+    sf.write("output_audio.wav", np.ravel(audio_np), 16000, subtype='PCM_16')
+
+    # TODO: Readd sanity check - Useful for ensuring optimizations do not cause incorrect output
+    #if wavname == "noisy_CHIME-real_F05_442C020S_STR_REAL":
+    #    assert np.allclose(y_hat, np.load("../../src/inference_example/check_CHIME-real_F05_442C020S_STR_REAL.npy"), atol=1e-5)
+
+    # TODO: Optional: plot the enhanced mel spectrogram
     # y_hat is the enhanced log-mel spectrogram
-    y_hat = y_hat[0].cpu().detach().numpy()
-    
-    # sanity check
-    if wavname == "noisy_CHIME-real_F05_442C020S_STR_REAL":
-        assert np.allclose(y_hat, np.load("./src/inference/check_CHIME-real_F05_442C020S_STR_REAL.npy"), atol=1e-5)
-    
-    # plot the enhanced mel spectrogram
-    noisy_mel = target_mel(noisy)
-    noisy_mel = torch.log(noisy_mel.clamp(min=1e-5))[0].cpu().detach().numpy()    
-    vmax = math.log(1e2)
-    vmin = math.log(1e-5)
-    plt.figure(figsize=(8, 4))
-    plt.subplot(2, 1, 1)
-    plt.imshow(noisy_mel, aspect='auto', origin='lower', cmap='jet', vmax=vmax, vmin=vmin)
-    plt.colorbar()
-    plt.subplot(2, 1, 2)
-    plt.imshow(y_hat, aspect='auto', origin='lower', cmap='jet', vmax=vmax, vmin=vmin)
-    plt.colorbar()
-    plt.tight_layout()
-    plt.savefig(f"./src/inference/{wavname}.png")
+    # y_hat = y_hat[0].cpu().detach().numpy()
+
+    # noisy_mel = target_mel(noisy)
+    # noisy_mel = torch.log(noisy_mel.clamp(min=1e-5))[0].cpu().detach().numpy()
+    # vmax = math.log(1e2)
+    # vmin = math.log(1e-5)
+    # plt.figure(figsize=(8, 4))
+    # plt.subplot(2, 1, 1)
+    # plt.imshow(noisy_mel, aspect='auto', origin='lower', cmap='jet', vmax=vmax, vmin=vmin)
+    # plt.colorbar()
+    # plt.subplot(2, 1, 2)
+    # plt.imshow(y_hat, aspect='auto', origin='lower', cmap='jet', vmax=vmax, vmin=vmin)
+    # plt.colorbar()
+    # plt.tight_layout()
+    # plt.savefig(f"../../src/inference_example/{wavname}.png")

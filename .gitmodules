@@ -1,0 +1,3 @@
+[submodule "mamba-cpu"]
+	path = model/arch/mamba-cpu
+	url = https://github.com/kroggen/mamba-cpu.git

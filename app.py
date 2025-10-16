@@ -12,7 +12,7 @@ from model.vocos.offline.pretrained import Vocos
 from model.io.stft import InputSTFT, TargetMel
 from huggingface_hub import hf_hub_download
 
-DEVICE = torch.device("cuda")
+DEVICE = torch.device("cpu") #"cuda"
 
 def read_audio(file_path):
     audio, sample_rate = sf.read(file_path)

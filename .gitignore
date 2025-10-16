@@ -178,3 +178,7 @@ dataset/
 logs/
 configs/dataset/train_real.yaml
 my_output/
+
+.idea/
+model/arch/output_audio.wav
+pretrained/*
