@@ -11,16 +11,26 @@ from torchaudio.transforms import Spectrogram, MelScale
 def soxnorm(wav: torch.Tensor, gain, factor=None):
     """sox norm, used in Vocos codes;
     """
-    wav = torch.clip(wav, max=1, min=-1).float()
-    if factor is None:
-        linear_gain = 10 ** (gain / 20)
-        factor = linear_gain / torch.abs(wav).max().item()
-        wav = wav * factor
-    else:
-        # for clean speech, normed by the noisy factor
-        wav = wav * factor
-    assert torch.all(wav.abs() <= 1), f"out wavform is not in [-1, 1], {wav.abs().max()}"
-    return wav, factor
+    if factor is not None:
+        assert len(wav) == len(factor), "factor length mismatch with wav batch size"
+    normed_wav = []
+    norm_factors = []
+    for i in range(len(wav)):
+        wav_i = torch.clip(wav[i], max=1, min=-1).float()
+        if factor is None:
+            linear_gain = 10 ** (gain / 20)
+            factor_i = linear_gain / torch.abs(wav_i).max().item()
+        else:
+            factor_i = factor[i]
+        wav_i = wav_i * factor_i    
+        if not torch.all(wav_i.abs() <= 1): # chances are than wav_i is out of [-1, 1] prob < 0.1%
+            print(f"out wavform is not in [-1, 1], {wav_i.abs().max()}, factor, {factor_i if factor is None else factor[i]}")
+            warning.warn(f"out wavform is not in [-1, 1], {wav_i.abs().max()}, factor, {factor_i if factor is None else factor[i]}")
+        normed_wav.append(wav_i)
+        norm_factors.append(factor_i if factor is None else factor[i])
+    normed_wav = torch.stack(normed_wav)
+    norm_factors = torch.tensor(norm_factors)
+    return normed_wav, norm_factors
 
 
 class InputSTFT(nn.Module):
