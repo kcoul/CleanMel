@@ -182,7 +182,10 @@ class TrainModule(pl.LightningModule):
             y_chunk = y[..., st:ed]
             _, _, Y_hat, Y_target, _ = self.forward(x_chunk, y_chunk)
             if start_pos is None:
-                start_pos = int(overlap / self.stft.hop_length) + 1
+                hop = getattr(self.input_stft, "hop_length", None)
+                if hop is None:
+                    hop = getattr(self.input_stft, "n_hop", 128)
+                start_pos = int(overlap / hop) + 1
                 chunk_Y_hat.append(Y_hat)
                 chunk_Y.append(Y_target)
             else:
