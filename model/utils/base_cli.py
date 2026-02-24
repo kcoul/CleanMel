@@ -32,12 +32,13 @@ class BaseCLI(LightningCLI):
 
     def add_model_invariant_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
         # RichProgressBar
-        parser.add_lightning_class_args(RichProgressBar, nested_key='progress_bar')
-        parser.set_defaults({"progress_bar.console_kwargs": {
-            "force_terminal": True,
-            "no_color": True,
-            "width": 200,
-        }})
+        if os.environ.get("CLEANMEL_DISABLE_RICH_PROGRESS", "0") != "1":
+            parser.add_lightning_class_args(RichProgressBar, nested_key='progress_bar')
+            parser.set_defaults({"progress_bar.console_kwargs": {
+                "force_terminal": True,
+                "no_color": True,
+                "width": 200,
+            }})
 
         # LearningRateMonitor
         parser.add_lightning_class_args(LearningRateMonitor, "learning_rate_monitor")
