@@ -278,12 +278,13 @@ class TrainModule(pl.LightningModule):
         y_hat = self.vocos(Y_hat, X_norm).clamp(min=-1, max=1)
         # Save result
         for i in range(len(x)):
+            out_name = os.path.basename(wavename[i])
             sf.write(
-                f"{self.exp_save_path}/wav/{wavename[i].split('/')[-1]}", 
+                f"{self.exp_save_path}/wav/{out_name}",
                 y_hat[i].detach().cpu().squeeze().numpy(), 
                 self.sample_rate)
             np.save(
-                f"{self.exp_save_path}/logmel/{wavename[i].split('/')[-1].replace('.wav', '.npy')}", 
+                f"{self.exp_save_path}/logmel/{out_name.replace('.wav', '.npy')}",
                 Y_hat[i].cpu().numpy())
     
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
