@@ -104,7 +104,6 @@ pretrained/
   title={CleanMel: Mel-Spectrogram Enhancement for Improving Both Speech Quality and ASR}, 
   year={2025},
   volume={33},
-  number={},
   pages={3202-3214},
   doi={10.1109/TASLPRO.2025.3592333}}
 }

@@ -158,9 +158,12 @@ class CleanMelDataset(Dataset):
 
         # step 6: normalization (only for avoiding overflow/underflow)
         # The normalization of online/offline neural networks is in ./model/io/stft.forward()
-        scale_value = 0.9 / max(np.max(np.abs(mix)), np.max(np.abs(target)))
+        scale_value = 0.9 / np.max(np.abs(mix))
         mix *= scale_value
         target *= scale_value
+        if np.max(np.abs(mix)) > 1 or np.max(np.abs(target)) > 1:
+            return self.__getitem__(index_seed=(rng.integers(low=0, high=len(self)), rng.integers(low=0, high=9999999999)))
+            
         paras = {
             'index': str(index),
             'seed': str(seed),

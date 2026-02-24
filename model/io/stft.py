@@ -11,15 +11,16 @@ from torchaudio.transforms import Spectrogram, MelScale
 def soxnorm(wav: torch.Tensor, gain, factor=None):
     """sox norm, used in Vocos codes;
     """
+    assert len(wav) == len(factor) if factor is not None else True, "factor length mismatch with wav batch size"
     wav = torch.clip(wav, max=1, min=-1).float()
     if factor is None:
         linear_gain = 10 ** (gain / 20)
-        factor = linear_gain / torch.abs(wav).max().item()
+        factor = linear_gain / torch.abs(wav).max(dim=-1).values.unsqueeze(-1)
         wav = wav * factor
     else:
         # for clean speech, normed by the noisy factor
         wav = wav * factor
-    assert torch.all(wav.abs() <= 1), f"out wavform is not in [-1, 1], {wav.abs().max()}"
+    assert torch.all(wav.abs() <= 1), f"out wavform is not in [-1, 1], {(~torch.all(wav.abs() <= 1)).sum().item()} samples violate, factor, {factor}"
     return wav, factor
 
 
